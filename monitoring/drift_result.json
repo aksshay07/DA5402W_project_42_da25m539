@@ -1,5 +1,24 @@
 {
+  "timestamp": "2026-08-23T15:14:04.994524+00:00",
   "drift_detected": true,
-  "drift_share": 1.0,
-  "threshold": 0.3
+  "psi": 1.9801,
+  "psi_threshold": 0.2,
+  "evidently_drift_share": 1.0,
+  "sample_count": 200,
+  "reference_distribution": {
+    "sadness": 0.2898,
+    "joy": 0.3381,
+    "love": 0.082,
+    "anger": 0.1354,
+    "fear": 0.1187,
+    "surprise": 0.036
+  },
+  "current_distribution": {
+    "sadness": 0.24,
+    "joy": 0.125,
+    "love": 0.0,
+    "anger": 0.485,
+    "fear": 0.15,
+    "surprise": 0.0
+  }
 }

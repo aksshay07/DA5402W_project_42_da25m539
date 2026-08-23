@@ -17,6 +17,7 @@ x-airflow-common: &airflow-common
 
     OMP_NUM_THREADS: "4"
     MKL_NUM_THREADS: "4"
+    DRIFT_HISTORY_PATH: /opt/airflow/monitoring/drift_history.jsonl
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -140,8 +141,10 @@ services:
       - "8000:8000"
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      PROCESSED_PATH: /app/data/processed
     volumes:
       - ./monitoring:/app/monitoring
+      - ./data:/app/data:ro
     depends_on:
       - mlflow
     networks:
@@ -168,6 +171,28 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
+    networks:
+      - sentiment-net
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      API_URL: http://api:8000
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      AIRFLOW_URL: http://airflow-webserver:8080
+      PROCESSED_PATH: /app/data/processed
+      DRIFT_HISTORY_PATH: /app/monitoring/drift_history.jsonl
+    volumes:
+      - ./monitoring:/app/monitoring
+      - ./scripts:/app/scripts
+      - ./data:/app/data:ro
+    depends_on:
+      - api
+      - mlflow
     networks:
       - sentiment-net
 
