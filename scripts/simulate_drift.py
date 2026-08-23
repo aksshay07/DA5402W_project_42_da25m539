@@ -214,7 +214,7 @@ def main():
         print("[simulate] Phase 1: Normal balanced traffic")
         texts_normal = weighted_sample(NORMAL_TEXTS, NORMAL_WEIGHTS, normal_count)
         s1, f1 = send_predictions(texts_normal, args.api_url, args.delay)
-        print(f"\n[simulate] Phase 2: Gen-Z hate-speech / insurgency surge")
+        print("\n[simulate] Phase 2: Gen-Z hate-speech / insurgency surge")
         texts_drift = weighted_sample(DRIFT_POOL, DRIFT_WEIGHTS, drift_count)
         s2, f2 = send_predictions(texts_drift, args.api_url, args.delay)
         s, f = s1 + s2, f1 + f2

@@ -4,6 +4,7 @@ import sqlite3
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -131,8 +132,8 @@ def drift_status():
         for label_id, cnt in rows:
             if 0 <= label_id < len(LABEL_NAMES):
                 live_distribution[LABEL_NAMES[label_id]] = round(cnt / max(total, 1), 4)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 - predictions DB may not exist yet; degrade gracefully
+        logger.warning(f"Could not read live prediction distribution: {e}")
 
     return {
         "drift_result": drift_result,
@@ -168,5 +169,6 @@ def prediction_counts():
             "total": total,
             "by_label": {r[0]: r[1] for r in rows},
         }
-    except Exception:
+    except Exception as e:  # noqa: BLE001 - predictions DB may not exist yet; degrade gracefully
+        logger.warning(f"Could not read prediction counts: {e}")
         return {"total": 0, "by_label": {}}

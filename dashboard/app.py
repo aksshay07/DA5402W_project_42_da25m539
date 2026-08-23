@@ -10,7 +10,6 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
@@ -113,7 +112,7 @@ def get_mlflow_models():
                     "Created": mv.creation_timestamp,
                 })
         return models
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - MLflow may be unreachable; degrade gracefully
         st.sidebar.warning(f"MLflow unavailable: {e}")
         return []
 
@@ -261,7 +260,7 @@ if history:
         fig_trend.add_trace(go.Scatter(
             x=hist_df["timestamp"], y=hist_df["psi"],
             mode="lines+markers", name="PSI Score",
-            line=dict(color="#EF553B", width=2),
+            line={"color": "#EF553B", "width": 2},
         ))
         fig_trend.add_hline(
             y=threshold_val, line_dash="dash", line_color="red",
@@ -321,7 +320,7 @@ with col_a1:
                 ["python", "scripts/simulate_drift.py",
                  "--mode", "normal", "--count", str(normal_count),
                  "--api-url", f"{API_URL}/predict", "--delay", "0.05"],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120, check=False,
             )
             if result.returncode == 0:
                 st.success(f"Sent {normal_count} normal predictions")
@@ -336,7 +335,7 @@ with col_a2:
                 ["python", "scripts/simulate_drift.py",
                  "--mode", "drift", "--count", str(drift_count),
                  "--api-url", f"{API_URL}/predict", "--delay", "0.05"],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120, check=False,
             )
             if result.returncode == 0:
                 st.success(f"Sent {drift_count} drift predictions")
@@ -348,7 +347,7 @@ with col_a3:
         with st.spinner("Running drift detector..."):
             result = subprocess.run(
                 ["python", "monitoring/drift_detector.py"],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True, timeout=60, check=False,
             )
             if result.returncode == 0:
                 st.success("Drift check complete!")

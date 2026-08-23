@@ -123,7 +123,7 @@ def main():
     evidently_share = None
     try:
         evidently_share = run_evidently_drift(REFERENCE_PATH, DB_PATH, WINDOW_SIZE)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Evidently is a secondary check; PSI is the primary signal
         print(f"[drift] Evidently check failed (non-fatal): {e}")
 
     drift_detected = psi >= PSI_THRESHOLD
