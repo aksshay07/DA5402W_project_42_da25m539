@@ -23,6 +23,160 @@ using the dair-ai/emotion dataset with technologies - Kafka, Spark, MLflow, Airf
 - **Prometheus + Grafana** - for monitoring the API
 - **GitHub Actions** - for CI/CD
 
+## System Architecture
+
+Here's how everything fits together, roughly in the order data flows
+through the system:
+
+1. **Data ingestion** - `scripts/download_data.py` pulls the raw
+   dair-ai/emotion dataset. Raw data is tracked with DVC and stored in a
+   shared Google Drive remote (not committed to Git, since it's large and
+   binary).
+2. **Streaming (Kafka)** - `kafka/producer.py` replays dataset rows into a
+   Kafka topic (`raw_comments`) to simulate posts arriving live.
+   `kafka/consumer_spark.py` reads from that topic using Spark Structured
+   Streaming, cleans the text, and writes it out.
+3. **Batch preprocessing (Spark)** - `processing/preprocess.py` cleans
+   the raw dataset (lowercasing, removing links/junk characters, dropping
+   nulls) using Apache Spark, producing `data/processed`. This is run as
+   a DVC pipeline stage so it's versioned and reproducible.
+4. **Model training (MLflow)** - `training/train_logreg.py` and
+   `training/train_distilbert.py` each train a model on the processed
+   data. Both log their parameters, metrics, and the trained model itself
+   to MLflow, which also acts as a model registry.
+5. **Orchestration (Airflow)** - three DAGs automate the steps above:
+   `data_ingest_dag` (Kafka), `train_pipeline_dag` (preprocess + train
+   both models), and `retrain_dag` (checks for drift, retrains if
+   needed, and automatically promotes the retrained model if it's at
+   least as good as the one currently in production).
+6. **Model promotion** - once trained, the better-performing model
+   version is manually promoted to "Production" in the MLflow Model
+   Registry.
+7. **Serving (FastAPI)** - `serving/app.py` loads the Production model
+   from MLflow and exposes `/predict`, `/health`, and `/metrics`
+   endpoints. Every prediction is logged to a local SQLite database
+   (`monitoring/predictions.db`) and to Prometheus metrics.
+8. **Monitoring (Prometheus + Grafana)** - Prometheus scrapes the API's
+   `/metrics` endpoint; Grafana visualizes latency, throughput, error
+   rate, and per-class prediction counts on a pre-built dashboard.
+9. **Drift detection** - `monitoring/drift_detector.py` compares the
+   distribution of recent predictions against the original training data.
+   It computes a Population Stability Index (PSI) score - a standard way
+   to measure how much a distribution has shifted - and also runs an
+   Evidently drift report as a second check. If PSI crosses a threshold,
+   the model is flagged as possibly needing retraining. Every check is
+   saved to a history file so we can see drift trends over time.
+10. **Dashboard (Streamlit)** - `dashboard/app.py` is a small web app
+    that shows the current drift status, prediction distributions, drift
+    trends over time, everything registered in the MLflow model registry,
+    and retraining history. It also has buttons to send test traffic and
+    manually trigger a drift check, which is handy for demos.
+11. **CI/CD (GitHub Actions)** - every push/PR runs linting and tests,
+    and pushes on `main` build and publish a Docker image of the API to
+    GitHub Container Registry.
+
+Everything except the Python virtual environment and the training/data
+scripts runs as a Docker container, wired together with Docker Compose.
+
+### Architecture Diagram
+
+```mermaid
+flowchart LR
+    subgraph Data
+        RAW[data/raw<br/>DVC + Google Drive]
+        PROC[data/processed]
+    end
+
+    subgraph Streaming
+        PROD[Kafka Producer]
+        TOPIC[(Kafka Topic:<br/>raw_comments)]
+        CONS[Spark Streaming<br/>Consumer]
+    end
+
+    subgraph Batch
+        SPARK[Spark Preprocessing]
+    end
+
+    subgraph Training
+        LOGREG[LogReg Training]
+        DISTIL[DistilBERT Training]
+        MLFLOW[(MLflow<br/>Tracking + Registry)]
+    end
+
+    subgraph Serving
+        API[FastAPI /predict /health /metrics]
+        DB[(SQLite<br/>predictions.db)]
+    end
+
+    subgraph Monitoring
+        PROM[Prometheus]
+        GRAF[Grafana Dashboard]
+        DRIFT[Evidently<br/>Drift Report]
+    end
+
+    ORCH[Airflow DAGs]
+
+    RAW --> PROD --> TOPIC --> CONS
+    RAW --> SPARK --> PROC
+    PROC --> LOGREG --> MLFLOW
+    PROC --> DISTIL --> MLFLOW
+    MLFLOW -- "Production model" --> API
+    API --> DB
+    API -- "/metrics" --> PROM --> GRAF
+    DB --> DRIFT
+    PROC --> DRIFT
+    ORCH -.orchestrates.-> PROD
+    ORCH -.orchestrates.-> SPARK
+    ORCH -.orchestrates.-> LOGREG
+    ORCH -.orchestrates.-> DISTIL
+    ORCH -.orchestrates.-> DRIFT
+```
+
+## Folder Structure and Dependencies
+
+```
+.
+├── airflow/
+│   ├── Dockerfile          # custom Airflow image (adds Java for PySpark + our requirements.txt)
+│   └── dags/                # data_ingest_dag.py, train_pipeline_dag.py, retrain_dag.py
+├── kafka/
+│   ├── producer.py           # replays data/raw into the raw_comments Kafka topic
+│   └── consumer_spark.py     # Spark Structured Streaming consumer
+├── processing/
+│   └── preprocess.py         # Spark batch preprocessing (DVC pipeline stage)
+├── training/
+│   ├── train_logreg.py       # TF-IDF + Logistic Regression, logs to MLflow
+│   └── train_distilbert.py   # fine-tuned DistilBERT, logs to MLflow
+├── monitoring/
+│   ├── prometheus.yml        # Prometheus scrape config
+│   ├── drift_detector.py     # main drift check: PSI + Evidently, writes history
+│   ├── drift_report.py       # older/simpler entry point, now just calls drift_detector.py
+│   ├── promote.py            # helper script to promote a model version to Production
+│   └── grafana/              # Grafana dashboard + datasource provisioning
+├── dashboard/
+│   ├── app.py                 # Streamlit dashboard: drift status, trends, registry, retrain history
+│   └── Dockerfile             # image for the dashboard service
+├── serving/
+│   ├── app.py                 # FastAPI app: /predict, /health, /metrics, /drift-status, /drift-history
+│   └── predict.py             # loads the Production model from MLflow and runs inference
+├── scripts/
+│   ├── download_data.py      # downloads the dair-ai/emotion dataset
+│   ├── check_data.py         # sanity-checks the downloaded data
+│   └── simulate_drift.py     # sends normal or drifted test traffic to the API, for demos
+├── tests/                     # pytest unit/integration tests
+├── .github/workflows/ci.yml   # CI/CD: lint, test, Docker build + push to GHCR
+├── dvc.yaml, dvc.lock         # DVC pipeline stage definitions
+├── docker-compose.yml         # brings up all services (Kafka, MLflow, Airflow, API, Prometheus, Grafana)
+├── Dockerfile                 # image for the FastAPI serving app
+├── requirements.txt           # Python dependencies (pinned versions)
+└── conftest.py                 # marks the repo root as importable for pytest
+```
+
+**Key dependencies** (full pinned list in `requirements.txt`): PySpark,
+confluent-kafka, MLflow, DVC (+ Google Drive support), scikit-learn,
+transformers + accelerate (for DistilBERT), FastAPI + uvicorn, Prometheus
+client libraries, Evidently, pytest, and ruff for linting.
+
 ## Data & Model Storage
 
 We use DVC to version our dataset and models. The actual files are stored
@@ -190,7 +344,8 @@ interactive page where you can try the API without typing curl commands.
 
 Instead of running each piece by hand, you can bring up everything at
 once with Docker Compose - this starts Kafka, MLflow, the API, Airflow,
-Prometheus, and Grafana all together, wired up to talk to each other:
+Prometheus, Grafana, and the Streamlit dashboard all together, wired up
+to talk to each other:
 
 ```bash
 docker compose up -d
@@ -255,13 +410,74 @@ docker compose up -d mlflow api prometheus grafana
 
 This checks whether the data the API is currently seeing looks
 meaningfully different from the data the models were trained on - a
-sign that the models might need retraining.
+sign that the models might need retraining. We use a metric called PSI
+(Population Stability Index) as the main decision signal, plus an
+Evidently drift report as a backup check.
 
 ```bash
-python monitoring/drift_report.py
+python monitoring/drift_detector.py
 ```
 
-### 13. Running tests and checks
+By default it looks at the last 200 predictions logged in
+`monitoring/predictions.db` and compares their label distribution
+against the training data in `data/processed`. If there aren't 200
+predictions yet, it just says so and skips the check rather than
+erroring out.
+
+Each run writes the latest result to `monitoring/drift_result.json` and
+also appends it to `monitoring/drift_history.jsonl`, so we can track
+drift over time instead of only seeing the most recent check.
+
+**Trying it out with fake traffic:** if you don't have real predictions
+logged yet, there's a script that sends realistic test text to the API
+for you:
+
+```bash
+# Send normal, balanced traffic - drift should stay low
+python scripts/simulate_drift.py --mode normal --count 200
+python monitoring/drift_detector.py
+
+# Send traffic skewed toward anger/fear - this should trigger drift
+python scripts/simulate_drift.py --mode drift --count 300
+python monitoring/drift_detector.py
+```
+
+**Checking drift through the API instead of the command line:**
+
+```bash
+curl http://localhost:8000/drift-status              # latest result + live distribution
+curl "http://localhost:8000/drift-history?limit=10"   # recent history
+curl http://localhost:8000/prediction-counts           # how many predictions, per label
+```
+
+**Automatic retraining:** the `retrain_dag` in Airflow runs this same
+drift check first. If drift is detected, it retrains both models, then
+compares the new DistilBERT model's macro F1 score against whatever's
+currently in Production. If the new one is at least as good, it's
+automatically promoted and the old version is archived; if not, the
+current Production model is left alone. Either way, the decision gets
+logged to `monitoring/retrain_history.jsonl`.
+
+### 13. Dashboard
+
+There's a Streamlit dashboard that pulls all the monitoring pieces
+together into one page - useful for demos since you don't have to run
+curl commands to see what's going on.
+
+```bash
+docker compose up -d dashboard
+```
+
+Open `http://localhost:8501` in a browser. It shows:
+
+- Current drift status (PSI score, threshold, how many samples it looked at)
+- Reference vs. current prediction distribution, side by side
+- A chart of PSI over time
+- Every model registered in MLflow, with their accuracy/F1 scores and stage
+- Buttons to send test traffic and trigger a drift check, without needing a terminal
+- A log of past retraining decisions (old vs. new model, whether it got promoted)
+
+### 14. Running tests and checks
 
 Before pushing code, you can run the same checks our CI pipeline runs
 automatically on GitHub:
