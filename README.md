@@ -29,10 +29,11 @@ We use DVC to version our dataset and models. The actual files are stored
 in a shared Google Drive folder (not in Git):
 https://drive.google.com/drive/folders/1RiJTIe29SK3OjqTYNKjv1E4qJbCE5Cf9
 
-To pull the data after cloning this repo, run `dvc pull`. You'll need to
-be added as a test user on our Google OAuth app first - ping Aksshay for
-access and for the client ID/secret (not committed here for security
-reasons).
+To pull the data after cloning this repo, run `dvc pull`. The DVC remote
+credentials are already set up in `.dvc/config`, so this should work out
+of the box for anyone with access to this (private) repo - no extra setup
+needed. The first time you run it, a browser window will pop up asking
+you to log in with Google - just approve it.
 
 ## Setup and Installation
 
@@ -82,18 +83,15 @@ since it saves you from re-downloading):
 dvc pull
 ```
 
-To use `dvc pull`/`dvc push`, you'll need access to our shared Google
-Drive folder and a couple of OAuth credentials - ping Aksshay for these,
-since they aren't committed to the repo for security reasons. Once you
-have them:
+The DVC remote credentials are already committed in `.dvc/config`
+(this repo is private, so that's fine), so `dvc pull`/`dvc push` should
+work right away - the first time you run either, a browser window will
+pop up asking you to log in with Google, just approve it.
 
-```bash
-dvc remote modify gdrive-storage gdrive_client_id '<CLIENT_ID>' --local
-dvc remote modify gdrive-storage gdrive_client_secret '<CLIENT_SECRET>' --local
-```
-
-The first time you run `dvc pull` or `dvc push`, a browser window will
-pop up asking you to log in with Google - just approve it.
+If you'd rather not use the shared Drive remote at all, everything is
+also fully reproducible from scratch - `python scripts/download_data.py`
+followed by `dvc repro` will regenerate the processed data and both
+trained models from the public dair-ai/emotion dataset.
 
 ### 4. Preprocess the data with Spark
 
