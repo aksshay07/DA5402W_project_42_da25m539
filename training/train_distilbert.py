@@ -33,6 +33,31 @@ MODEL_NAME = "sentiment-distilbert"
 NUM_LABELS = 6
 
 
+def resolve_training_device() -> str:
+    """Resolve auto, cuda, mps, or cpu without changing the default behavior."""
+    requested = os.getenv("TRAINING_DEVICE", "auto").strip().lower()
+    valid_devices = {"auto", "cpu", "cuda", "mps"}
+    if requested not in valid_devices:
+        raise ValueError(
+            f"TRAINING_DEVICE must be one of {sorted(valid_devices)}, got {requested!r}"
+        )
+
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("TRAINING_DEVICE=cuda requested, but CUDA is unavailable")
+    if requested == "mps" and (
+        not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()
+    ):
+        raise RuntimeError("TRAINING_DEVICE=mps requested, but MPS is unavailable")
+    return requested
+
+
 def load_data():
     import glob
     files = glob.glob(f"{PROCESSED_PATH}/**/*.parquet", recursive=True) or \
@@ -78,6 +103,8 @@ class DistilBertEmotionModel(mlflow.pyfunc.PythonModel):
 def main():
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT_NAME)
+    device = resolve_training_device()
+    print(f"[distilbert] training device: {device}")
 
     texts, labels = load_data()
     X_train, X_test, y_train, y_test = train_test_split(
@@ -89,6 +116,7 @@ def main():
         "batch_size": int(os.getenv("DISTILBERT_BATCH_SIZE", "32")),
         "lr": 2e-5,
         "max_len": 128,
+        "device": device,
     }
 
     tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
@@ -112,22 +140,30 @@ def main():
     )
 
     with tempfile.TemporaryDirectory() as run_tmpdir:
-        training_args = TrainingArguments(
-            output_dir=run_tmpdir,
-            num_train_epochs=params["epochs"],
-            per_device_train_batch_size=params["batch_size"],
-            per_device_eval_batch_size=params["batch_size"],
-            learning_rate=params["lr"],
-            eval_strategy="epoch",
-            save_strategy="no",
-            logging_strategy="epoch",
+        training_args_kwargs = {
+            "output_dir": run_tmpdir,
+            "num_train_epochs": params["epochs"],
+            "per_device_train_batch_size": params["batch_size"],
+            "per_device_eval_batch_size": params["batch_size"],
+            "learning_rate": params["lr"],
+            "eval_strategy": "epoch",
+            "save_strategy": "no",
+            "logging_strategy": "epoch",
             # 0 = load/collate in the main process. Airflow's container has
             # limited CPU headroom shared with the rest of the stack, and
             # worker subprocesses add memory/thread overhead not worth it
             # for a dataset this size.
-            dataloader_num_workers=0,
-            report_to=[],
-            disable_tqdm=True,
+            "dataloader_num_workers": 0,
+            "report_to": [],
+            "disable_tqdm": True,
+        }
+        if device == "cpu":
+            training_args_kwargs["no_cuda"] = True
+        elif device == "mps":
+            training_args_kwargs["use_mps_device"] = True
+
+        training_args = TrainingArguments(
+            **training_args_kwargs,
         )
 
         trainer = Trainer(

@@ -33,5 +33,14 @@ prometheus-client==0.26.0
 prometheus-fastapi-instrumentator==7.0.0
 loguru==0.7.3
 
+# Drift detection
+evidently==0.4.33
+
+# Dashboard
+streamlit==1.37.0
+plotly==5.22.0
+requests==2.32.3
+
+
 # Testing
 pytest==8.2.2

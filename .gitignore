@@ -27,3 +27,5 @@ mlartifacts/
 monitoring/predictions.db
 airflow/logs/
 
+sentiment-api.json
+
